@@ -43,7 +43,22 @@ class PageTable;
 
 class VMPool { /* Virtual Memory Pool */
 private:
-   /* -- DEFINE YOUR VIRTUAL MEMORY POOL DATA STRUCTURE(s) HERE. */
+   unsigned long  base_address;
+   unsigned long  size;
+   ContFramePool *frame_pool;
+   PageTable     *page_table;
+
+   static const int MAX_REGIONS = 64;
+
+   struct Region {
+      unsigned long base_page;   /* 0 means empty slot */
+      unsigned long page_count;
+   };
+
+   Region *allocated_regions;   /* pointer into first pool page */
+   Region *free_regions;        /* pointer into first pool page, offset by MAX_REGIONS */
+   int     allocated_count;
+   int     free_count;
 
 public:
    VMPool(unsigned long  _base_address,
