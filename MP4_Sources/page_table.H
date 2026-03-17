@@ -52,6 +52,11 @@ private:
   unsigned long        * page_directory;     /* where is page directory located? */
   unsigned long          page_directory_frame; /* physical frame number of page directory */
 
+  /* POOL REGISTRY */
+  static const int       MAX_POOLS = 32;
+  VMPool               * registered_pools[MAX_POOLS];
+  int                    pool_count;
+
   /* RECURSIVE ADDRESS HELPERS */
   unsigned long * PDE_address(unsigned long addr);
   /* Returns pointer (via recursive mapping) to the PDE governing addr. */
@@ -92,6 +97,13 @@ public:
 
   static void handle_fault(REGS * _r);
   /* The page fault handler. */
+
+  void register_pool(VMPool * _pool);
+  /* Registers a VMPool so the fault handler can validate faulting addresses. */
+
+  void free_page(unsigned long _page_no);
+  /* Unmaps virtual page _page_no and releases its backing frame.
+     _page_no is the virtual address >> 12. */
 
 };
 

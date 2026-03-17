@@ -3,6 +3,7 @@
 #include "console.H"
 #include "paging_low.H"
 #include "page_table.H"
+#include "vm_pool.H"
 
 PageTable * PageTable::current_page_table = nullptr;
 unsigned int PageTable::paging_enabled = 0;
@@ -54,6 +55,9 @@ PageTable::PageTable()
    // Recursive mapping: entry 1023 points to the page directory itself
    page_directory[1023] = (pd_frame << 12) | 0x3;
 
+   // Initialize pool registry (PageTable may be stack-allocated, so no BSS zero-init)
+   pool_count = 0;
+
    Console::puts("Constructed Page Table object\n");
 }
 
@@ -72,6 +76,35 @@ void PageTable::enable_paging()
    write_cr0(cr0);
    paging_enabled = 1;
    Console::puts("Enabled paging\n");
+}
+
+void PageTable::register_pool(VMPool * _pool)
+{
+   assert(pool_count < MAX_POOLS);
+   registered_pools[pool_count] = _pool;
+   pool_count++;
+   Console::puts("Registered VMPool with PageTable\n");
+}
+
+void PageTable::free_page(unsigned long _page_no)
+{
+   unsigned long addr = _page_no << 12;
+
+   // Check PDE first: if the page table page was never allocated,
+   // the page was never backed and there is nothing to free.
+   unsigned long* pde = PDE_address(addr);
+   if (!(*pde & 0x1)) {
+      return;
+   }
+
+   unsigned long* pte = PTE_address(addr);
+   if (*pte & 0x1) {
+      unsigned long frame_no = *pte >> 12;
+      *pte = 0;                          // invalidate PTE before freeing frame
+      write_cr3(read_cr3());             // flush entire TLB
+      ContFramePool::release_frames(frame_no); // static: finds correct pool
+   }
+   // PTE not present means page was allocated but never faulted in — nothing to do
 }
 
 unsigned long* PageTable::PDE_address(unsigned long addr)
@@ -96,6 +129,22 @@ void PageTable::handle_fault(REGS * _r)
 {
    unsigned long fault_addr = read_cr2();
    PageTable* cur = current_page_table;
+
+   // Legitimacy check: only enforced once pools have been registered.
+   // When no pools are registered (Part I / _TEST_PAGE_TABLE_ path), all faults are allowed.
+   if (cur->pool_count > 0) {
+      bool legitimate = false;
+      for (int i = 0; i < cur->pool_count; i++) {
+         if (cur->registered_pools[i]->is_legitimate(fault_addr)) {
+            legitimate = true;
+            break;
+         }
+      }
+      if (!legitimate) {
+         Console::puts("SEGFAULT: illegitimate address\n");
+         for (;;);
+      }
+   }
 
    unsigned long* pde = cur->PDE_address(fault_addr);
    if (!(*pde & 0x1)) {
